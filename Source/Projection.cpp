@@ -576,7 +576,7 @@ Projection::syncProject (int             c_lev,
     // If periodic, copy into periodic translates of Vsync.
     //
     if (geom.isAnyPeriodic()) {
-	Vsync.FillBoundary(0, BL_SPACEDIM, geom.periodicity());
+      Vsync.FillBoundary(0, BL_SPACEDIM, geom.periodicity());
     }
 
     Vector<MultiFab*> phis(maxlev, nullptr);

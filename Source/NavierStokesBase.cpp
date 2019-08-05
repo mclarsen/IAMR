@@ -1332,13 +1332,11 @@ Gp.FillBoundary(geom.periodicity());
 #endif
 {
     Real gr_max[BL_SPACEDIM];
-
+    FArrayBox tforces;
     for (MFIter Rho_mfi(rho_ctime,true); Rho_mfi.isValid(); ++Rho_mfi)
     {
-    
-        FArrayBox tforces;
       
-	const Box& bx=Rho_mfi.tilebox();
+	  const Box& bx=Rho_mfi.tilebox();
         //
         // Get the velocity forcing.  For some reason no viscous forcing.
         //
