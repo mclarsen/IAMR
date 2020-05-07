@@ -9,12 +9,22 @@
 #include <AMReX_ParallelDescriptor.H>
 #include <AMReX_BLProfiler.H>
 
+#include <AMReX_AmrLevel.H>
+#include <AMReX_MultiFab.H>
+#include <AMReX_Conduit_Blueprint.H>
+#include <conduit/conduit.hpp>
+#include <conduit/conduit_blueprint.hpp>
+#include <conduit/conduit_relay.hpp>
+
+#include <ascent.hpp>
+
 using namespace amrex;
 
 int
 main (int   argc,
       char* argv[])
 {
+    std::cout<<"Hello!\n";
     amrex::Initialize(argc,argv);
 
     BL_PROFILE_REGION_START("main()");
@@ -29,8 +39,8 @@ main (int   argc,
 
     ParmParse pp;
 
-    max_step  = -1; 
-    num_steps = -1; 
+    max_step  = -1;
+    num_steps = -1;
     strt_time =  0.0;
     stop_time = -1.0;
 
@@ -88,6 +98,105 @@ main (int   argc,
            (amrptr->cumTime() < stop_time || stop_time < 0.0) )
     {
         amrptr->coarseTimeStep(stop_time);
+
+        std::cout<<"0000000000000000000000000000000000000000000000000000000000000000000000\n";
+        //const std::list<std::string>& plot_vars = amrptr->statePlotVars();
+        Vector<const MultiFab*> mfs;
+        Vector<Geometry> geoms;
+        Vector<int> level_steps;
+        Vector<std::string> var_names;
+        Vector<IntVect> ref_ratios;
+        const int level = 0;
+
+        const DescriptorList& desc_lst = amrptr->getLevel(0).get_desc_lst();
+        std::vector<std::pair<int,int> > plot_var_map;
+        for (int typ = 0; typ < desc_lst.size(); typ++)
+        {
+          for (int comp = 0; comp < desc_lst[typ].nComp();comp++)
+          {
+            if (amrptr->isStatePlotVar(desc_lst[typ].name(comp)) &&
+                desc_lst[typ].getType() == IndexType::TheCellType())
+            {
+                plot_var_map.push_back(std::pair<int,int>(typ,comp));
+                var_names.push_back(desc_lst[typ].name(comp));
+            }
+          }
+        }
+
+        for(int level = 0; level <= amrptr->finestLevel(); ++level)
+        {
+
+          // for each level
+          const int nGrow = 1;
+          const int n_data_items = plot_var_map.size();
+
+          MultiFab*  level_mf = new MultiFab(amrptr->getLevel(level).boxArray(),
+                                             amrptr->getLevel(level).DistributionMap(),
+                                             n_data_items,
+                                             nGrow,
+                                             MFInfo(),
+                                             amrptr->getLevel(level).Factory());
+          mfs.push_back(level_mf);
+          MultiFab* this_dat = 0;
+          //
+          // Cull data from state variables --
+          //
+          for (int i = 0; i < static_cast<int>(plot_var_map.size()); i++)
+          {
+            int type  = plot_var_map[i].first;
+            int comp = plot_var_map[i].second;
+            this_dat = &amrptr->getLevel(level).get_new_data(type);
+            MultiFab::Copy(*level_mf,*this_dat,comp,i,1,nGrow);
+          }
+
+          geoms.push_back(amrptr->getLevel(level).Geom());
+          level_steps.push_back(amrptr->levelSteps(level));
+          ref_ratios.push_back(amrptr->getLevel(level).fineRatio());
+
+        }
+        /////////////////////////////
+        // Setup Ascent
+        /////////////////////////////
+        // Create an instance of Ascent
+        ascent::Ascent ascent;
+        conduit::Node open_opts;
+#ifdef BL_USE_MPI
+        open_opts["mpi_comm"] = MPI_Comm_c2f(ParallelDescriptor::Communicator());
+#endif
+
+        ascent.open(open_opts);
+        ///////////////////////////////////////////////////////////////////
+        // Wrap our AMReX Mesh into a Conduit Mesh Blueprint Tree
+        ///////////////////////////////////////////////////////////////////
+        conduit::Node bp_mesh;
+        MultiLevelToBlueprint( amrptr->finestLevel()+1,
+                               mfs,
+                               var_names,
+                               geoms,
+                               amrptr->cumTime(),
+                               level_steps,
+                               ref_ratios,
+                               bp_mesh);
+
+        conduit::Node verify_info;
+        if(!conduit::blueprint::mesh::verify(bp_mesh,verify_info))
+        {
+          // verify failed, print error message
+          ASCENT_INFO("Error: Mesh Blueprint Verify Failed!");
+          // show details of what went awry
+          verify_info.print();
+        }
+        else
+        {
+          std::cout << " everything A-ok" << std::endl;
+        //      verify_info.print();
+        }
+        // setup actions
+        conduit::Node actions;
+        ascent.publish(bp_mesh);
+
+        ascent.execute(actions);
+
     }
     //
     // Write final checkpoint and plotfile.
